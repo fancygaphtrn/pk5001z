@@ -1,0 +1,8 @@
+{
+  "domain": "pk5001z",
+  "name": "Zytel pk5001z DSL modem sensor",
+  "documentation": "https://github.com/fancygaphtrn/pk5001z",
+  "dependencies": [],
+  "codeowners": [],
+  "requirements": []
+}

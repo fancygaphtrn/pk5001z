@@ -30,7 +30,7 @@ from homeassistant.helpers.entity import Entity
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = 'http://{0}:{1}{2}'
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=2)
+MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=10)
 
 SENSOR_PREFIX = 'pk5001z'
 SENSOR_TYPES = {
@@ -123,7 +123,7 @@ class Pk5001zData(object):
                         _LOGGER.debug("Pk5001z: data success")
                         self.data =  data.text
                     else:
-                        _LOGGER.debug("Pk5001z: data failed")
+                        _LOGGER.debug("Pk5001z: No valid data returned %s", data.text)
                 else:
                     _LOGGER.debug("Pk5001z: data failed")
             else:
@@ -178,14 +178,7 @@ class Pk5001zSensor(Entity):
 
         """['CONNECTED', '', 'IPoE via DHCP', '', 'N/A', '', 'N/A', 'N/A', 'N/A', '10M:40S', '', '15354', '15595', '', '26M:54S', '', '1500', '', '1460', '', '71.219.123.120', '', '205.171.2.65', '', '205.171.3.65', '', '71.219.123.254', '', '25M:42S', '', 'CONNECTED', '', '0.604', '', '1.792', '', '255.255.255.0', '', 'Disabled', '', 'N/A', '', 'N/A', '', 'N/A', '', '64', '', 'N/A', '', '', '', '', '', 'N/A\r\n']"""
         
-        if self.data.data == None:
-            if self.type == 'upload':
-                self._state = 0
-            elif self.type == 'download':
-                self._state = 0
-            else:
-                self._state = "Unknown"
-        else:
+        if self.data.data != None:
             values = self.data.data.split('|')
             
             if self.type == 'upload':

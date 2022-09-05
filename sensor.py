@@ -36,11 +36,11 @@ SENSOR_PREFIX = 'pk5001z'
 SENSOR_TYPES = {
     'upload': ['Upload', 'Mbps', 'mdi:arrow-up'],
     'download': ['Download', 'Mbps', 'mdi:arrow-down'],
-    'dsl_status': ['DSL Status', '', 'mdi:check'],
-    'internet_status': ['Internet Status', '', 'mdi:check'],
-    'modem_ip': ['Modem IP Address', '', 'mdi:check'],
-    'remote_ip': ['Remote IP Address', '', 'mdi:check'],
-    'ipv4_link_uptime': ['IPv4 Link Uptime', '', 'mdi:check'],
+    'dsl_status': ['DSL Status', None, 'mdi:check'],
+    'internet_status': ['Internet Status', None, 'mdi:check'],
+    'modem_ip': ['Modem IP Address', None, 'mdi:check'],
+    'remote_ip': ['Remote IP Address', None, 'mdi:check'],
+    'ipv4_link_uptime': ['IPv4 Link Uptime', None, 'mdi:check'],
 }
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -48,13 +48,15 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_USERNAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
     vol.Required(CONF_RESOURCES, default=[]):
-        vol.All(cv.ensure_list, [vol.In(SENSOR_TYPES)]),
+    vol.All(cv.ensure_list, [vol.In(SENSOR_TYPES)]),
     vol.Optional(CONF_PORT, default=80): cv.positive_int,
 })
 
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Setup the pk5001z sensors."""
+    _LOGGER.info("Pk5001z starting...")
+
     host = config.get(CONF_HOST)
     port = config.get(CONF_PORT)
     username = config.get(CONF_USERNAME)
@@ -89,52 +91,67 @@ class Pk5001zData(object):
         self._username = username
         self._password = password
         self.data = None
-        self._backoff = dt_util.utcnow()
+        self._session = requests.Session()
+        self.loginurl = BASE_URL.format(
+                    self._host, self._port,
+                    '/login.cgi'
+        )
+        self.dataurl = BASE_URL.format(
+                    self._host, self._port,
+                    '/GetWANDSLInfo.cgi'
+        )
+        self.login_payload = payload = {'loginSubmitValue':'1','admin_username':self._username,'admin_password':self._password}
+
+        self.login_success = self.modem_login()
+        self.login_success = True
+        
+    def modem_login(self):
+
+        success = False
+        try:
+            resp = self._session.post(self.loginurl, data=self.login_payload, timeout=15)
+            if resp.status_code == 200:
+                _LOGGER.debug("Pk5001z: login success")
+                success = True
+            else:
+                _LOGGER.debug("Pk5001z: login failed")
+        except requests.exceptions.Timeout as e:
+            _LOGGER.error("Pk5001z login: timeout %s", e)
+    
+        except requests.exceptions.ConnectionError as e:
+            _LOGGER.error("Pk5001z login: No route to device %s %s", dataurl, e)
+
+        return success
+
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def update(self):
         """Update the data from the Pk5001z."""
 
-        _LOGGER.debug("Pk5001z: Backoff = %i", self._backoff - dt_util.utcnow())
-        if self._backoff > dt_util.utcnow():
-            return
-
-        loginurl = BASE_URL.format(
-                    self._host, self._port,
-                    '/login.cgi'
-        )
-        dataurl = BASE_URL.format(
-                    self._host, self._port,
-                    '/GetWANDSLInfo.cgi'
-        )
-        login_payload = payload = {'loginSubmitValue':'1','admin_username':self._username,'admin_password':self._password}
-
         try:
-            self.data = None
-            s = requests.Session()
-            resp = s.post(loginurl, data=login_payload)
-            if resp.status_code == 200:
-                _LOGGER.debug("Pk5001z: login success")
-                data = s.get(dataurl)
-                if data.status_code == 200:
-                    values = data.text.split('|')
+            _LOGGER.debug("Pk5001z: update start")
+        
+            if self.login_success:
+                resp = self._session.get(self.dataurl, timeout=15)
+                if resp.status_code == 200:
+                    values = resp.text.split('|')
                     _LOGGER.debug("Pk5001z: values %i", len(values))
                     if len(values) == 55:
-                        _LOGGER.debug("Pk5001z: data success")
-                        self.data =  data.text
+                        _LOGGER.debug("Pk5001z  data success: Data = %s", self.data)
+                        self.data =  resp.text
                     else:
-                        _LOGGER.debug("Pk5001z: No valid data returned %s", data.text)
-                else:
-                    _LOGGER.debug("Pk5001z: data failed")
-            else:
-                _LOGGER.debug("Pk5001z: login failed")
-        except requests.exceptions.ConnectionError:
-            _LOGGER.error("Pk5001z: No route to device %s", dataurl)
-            self.data = None
-            self._backoff = dt_util.utcnow() + timedelta(seconds=60)
-            
-        _LOGGER.debug("Pk5001z: Data = %s", self.data)
+                        _LOGGER.debug("Pk5001z: No valid data returned %s", resp.text)
 
+                        self.login_success = self.modem_login()
+                else:
+                    _LOGGER.debug("Pk5001z: data failed  Status %i", resp.status_code)
+
+        except requests.exceptions.Timeout as e:
+            _LOGGER.error("Pk5001z: timeout %s", e)
+
+        except requests.exceptions.ConnectionError as e:
+            _LOGGER.error("Pk5001z: No route to device %s %s", dataurl, e)
+            self.data = "Down||||||||||||||||||||N/A||||||N/A||0||Down||0||0||||||||||||||||||||"
 
 class Pk5001zSensor(Entity):
     """Representation of a Pk5001z sensor from the Pk5001z."""
@@ -168,6 +185,8 @@ class Pk5001zSensor(Entity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement of this entity, if any."""
+        if self._unit_of_measurement == None:
+            return
         return self._unit_of_measurement
 
     def update(self):
@@ -177,7 +196,6 @@ class Pk5001zSensor(Entity):
         _LOGGER.debug("Pk5001z: type = %s", self.type)
 
         """['CONNECTED', '', 'IPoE via DHCP', '', 'N/A', '', 'N/A', 'N/A', 'N/A', '10M:40S', '', '15354', '15595', '', '26M:54S', '', '1500', '', '1460', '', '71.219.123.120', '', '205.171.2.65', '', '205.171.3.65', '', '71.219.123.254', '', '25M:42S', '', 'CONNECTED', '', '0.604', '', '1.792', '', '255.255.255.0', '', 'Disabled', '', 'N/A', '', 'N/A', '', 'N/A', '', '64', '', 'N/A', '', '', '', '', '', 'N/A\r\n']"""
-        
         if self.data.data != None:
             values = self.data.data.split('|')
             
